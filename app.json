@@ -2,7 +2,7 @@
   "expo": {
     "name": "Blinky",
     "slug": "Blinky",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/app.png",
     "scheme": "myapp",
@@ -15,7 +15,8 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/app.png",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "package": "com.msdharani.Blinky"
     },
     "web": {
       "bundler": "metro",
@@ -36,6 +37,14 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "334f2339-fda0-44fa-8c4e-d6b24417d970"
+      }
     }
   }
 }

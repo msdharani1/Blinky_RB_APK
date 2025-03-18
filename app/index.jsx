@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   StyleSheet, 
   Text, 
@@ -8,9 +8,10 @@ import {
   TextInput,
   SafeAreaView,
   StatusBar,
-  Alert
+  Alert,
+  Animated
 } from 'react-native';
-import { AntDesign, Feather } from '@expo/vector-icons';
+import { AntDesign, Feather, FontAwesome } from '@expo/vector-icons';
 import { getDatabase, ref, set, onValue } from 'firebase/database';
 import { initializeApp } from 'firebase/app';
 
@@ -29,6 +30,53 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const database = getDatabase(app);
 
+// IP Input component to isolate the issue
+const IpInputSection = ({ ipAddress, setIpAddress, saveIpAddress, isDarkMode }) => {
+  return (
+    <View style={styles.ipInputContainer}>
+      <TextInput
+        style={[styles.ipInput, { 
+          backgroundColor: isDarkMode ? '#333333' : '#ffffff',
+          color: isDarkMode ? '#e0e0e0' : '#333333',
+          borderColor: isDarkMode ? '#444444' : '#dddddd'
+        }]}
+        placeholder="Enter IP Address"
+        placeholderTextColor={isDarkMode ? "#aaa" : "#999"}
+        value={ipAddress}
+        onChangeText={setIpAddress}
+        keyboardType="decimal-pad"
+        autoFocus
+      />
+      <TouchableOpacity 
+        style={styles.saveButton}
+        onPress={saveIpAddress}
+      >
+        <Feather name="check" size={20} color="#fff" />
+      </TouchableOpacity>
+    </View>
+  );
+};
+
+// Light button component
+const LightButton = ({ lightOn, lightNumber, onPress, disabled, isDarkMode }) => {
+  return (
+    <TouchableOpacity 
+      style={[styles.lightButton, lightOn === 1 && styles.lightButtonOn]}
+      onPress={onPress}
+      disabled={disabled}
+    >
+      <FontAwesome 
+        name="lightbulb-o" 
+        size={24} 
+        color={lightOn === 1 ? '#f5dd4b' : '#888'} 
+      />
+      <Text style={[styles.lightText, { color: isDarkMode ? '#e0e0e0' : '#333333' }]}>
+        {lightNumber}
+      </Text>
+    </TouchableOpacity>
+  );
+};
+
 export default function BlinkyApp() {
   const [internetEnabled, setInternetEnabled] = useState(false);
   const [wifiEnabled, setWifiEnabled] = useState(false);
@@ -36,28 +84,100 @@ export default function BlinkyApp() {
   const [ipAddress, setIpAddress] = useState('');
   const [savedIpAddress, setSavedIpAddress] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(true);
+  
+  // Light states
+  const [internetLights, setInternetLights] = useState({
+    one: 0,
+    two: 0,
+    three: 0
+  });
+  
+  const [wifiLights, setWifiLights] = useState({
+    one: 0,
+    two: 0,
+    three: 0
+  });
+
+  // Animation value for brightness effect
+  const brightness = useRef(new Animated.Value(0)).current;
 
   // Load initial state from Firebase
   useEffect(() => {
-    const lightsRef = ref(database, 'lights/state');
-    onValue(lightsRef, (snapshot) => {
-      const data = snapshot.val();
-      setInternetEnabled(data === 1);
+    const internetRef = ref(database, 'internet');
+    onValue(internetRef, (snapshot) => {
+      const data = snapshot.val() || { enabled: 0, one: 0, two: 0, three: 0 };
+      setInternetEnabled(data.enabled === 1);
+      setInternetLights({
+        one: data.one || 0,
+        two: data.two || 0,
+        three: data.three || 0
+      });
+    });
+
+    const wifiRef = ref(database, 'wifi');
+    onValue(wifiRef, (snapshot) => {
+      const data = snapshot.val() || { enabled: 0, one: 0, two: 0, three: 0 };
+      setWifiEnabled(data.enabled === 1);
+      setWifiLights({
+        one: data.one || 0,
+        two: data.two || 0,
+        three: data.three || 0
+      });
     });
   }, []);
+
+  // Update brightness animation when lights change
+  useEffect(() => {
+    const anyLightOn = 
+      internetEnabled && (internetLights.one === 1 || internetLights.two === 1 || internetLights.three === 1) ||
+      wifiEnabled && (wifiLights.one === 1 || wifiLights.two === 1 || wifiLights.three === 1);
+    
+    Animated.timing(brightness, {
+      toValue: anyLightOn ? 1 : 0,
+      duration: 500,
+      useNativeDriver: false
+    }).start();
+
+    // Update dark mode based on lights
+    setIsDarkMode(!anyLightOn);
+  }, [internetEnabled, wifiEnabled, internetLights, wifiLights]);
 
   const toggleInternet = async () => {
     try {
       setIsLoading(true);
       const newState = !internetEnabled;
-      setInternetEnabled(newState);
       
-      // Update Firebase
-      await set(ref(database, 'lights/state'), newState ? 1 : 0);
+      // If turning on internet, turn off WiFi
+      if (newState && wifiEnabled) {
+        await set(ref(database, 'wifi'), {
+          enabled: 0,
+          one: 0,
+          two: 0,
+          three: 0
+        });
+        setWifiEnabled(false);
+        setWifiLights({ one: 0, two: 0, three: 0 });
+      }
+      
+      // Update internet state
+      await set(ref(database, 'internet/enabled'), newState ? 1 : 0);
+      
+      // If turning off internet, turn off all lights
+      if (!newState) {
+        await set(ref(database, 'internet'), {
+          enabled: 0,
+          one: 0,
+          two: 0,
+          three: 0
+        });
+        setInternetLights({ one: 0, two: 0, three: 0 });
+      }
+      
+      setInternetEnabled(newState);
     } catch (error) {
       console.error("Error updating Firebase:", error);
       Alert.alert("Error", "Failed to update light state");
-      setInternetEnabled(!newState); // Revert the state if there's an error
     } finally {
       setIsLoading(false);
     }
@@ -72,21 +192,101 @@ export default function BlinkyApp() {
     try {
       setIsLoading(true);
       const newState = !wifiEnabled;
-      setWifiEnabled(newState);
       
-      // Send HTTP request to the IP address
-      const endpoint = newState ? '/on' : '/off';
-      const response = await fetch(`http://${savedIpAddress}:3000${endpoint}`, {
+      // If turning on WiFi, turn off Internet
+      if (newState && internetEnabled) {
+        await set(ref(database, 'internet'), {
+          enabled: 0,
+          one: 0,
+          two: 0,
+          three: 0
+        });
+        setInternetEnabled(false);
+        setInternetLights({ one: 0, two: 0, three: 0 });
+      }
+      
+      // Update WiFi state in Firebase
+      await set(ref(database, 'wifi/enabled'), newState ? 1 : 0);
+      
+      // If turning off WiFi, turn off all lights
+      if (!newState) {
+        await set(ref(database, 'wifi'), {
+          enabled: 0,
+          one: 0,
+          two: 0,
+          three: 0
+        });
+        setWifiLights({ one: 0, two: 0, three: 0 });
+        
+        // Also send requests to turn off all lights
+        await Promise.all([
+          fetch(`http://${savedIpAddress}:3000/one/0`),
+          fetch(`http://${savedIpAddress}:3000/two/0`),
+          fetch(`http://${savedIpAddress}:3000/three/0`)
+        ]);
+      }
+      
+      setWifiEnabled(newState);
+    } catch (error) {
+      console.error("Error sending HTTP request:", error);
+      Alert.alert("Error", "Failed to send request to the IP address");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const toggleInternetLight = async (light) => {
+    if (!internetEnabled) return;
+    
+    try {
+      setIsLoading(true);
+      const currentState = internetLights[light];
+      const newState = currentState === 1 ? 0 : 1;
+      
+      // Update Firebase
+      await set(ref(database, `internet/${light}`), newState);
+      
+      // Update local state
+      setInternetLights(prev => ({
+        ...prev,
+        [light]: newState
+      }));
+    } catch (error) {
+      console.error("Error updating Firebase:", error);
+      Alert.alert("Error", "Failed to update light state");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const toggleWifiLight = async (light) => {
+    if (!wifiEnabled || !savedIpAddress) return;
+    
+    try {
+      setIsLoading(true);
+      const currentState = wifiLights[light];
+      const newState = currentState === 1 ? 0 : 1;
+      
+      // Update Firebase
+      await set(ref(database, `wifi/${light}`), newState);
+      
+      // Send HTTP request
+      const response = await fetch(`http://${savedIpAddress}:3000/${light}/${newState}`, {
         method: 'GET',
       });
       
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
+      
+      // Update local state
+      setWifiLights(prev => ({
+        ...prev,
+        [light]: newState
+      }));
     } catch (error) {
       console.error("Error sending HTTP request:", error);
       Alert.alert("Error", "Failed to send request to the IP address");
-      setWifiEnabled(!newState); // Revert the state if there's an error
     } finally {
       setIsLoading(false);
     }
@@ -103,91 +303,172 @@ export default function BlinkyApp() {
     setShowIpInput(false);
   };
 
+  // Background color based on brightness
+  const containerStyle = {
+    backgroundColor: isDarkMode ? '#121212' : '#f5f5f7'
+  };
+  
+  const headerStyle = {
+    backgroundColor: isDarkMode ? '#1a1a1a' : '#3498db'
+  };
+  
+  const headerTextStyle = {
+    color: isDarkMode ? '#e0e0e0' : '#ffffff'
+  };
+  
+  const settingContainerStyle = {
+    backgroundColor: isDarkMode ? '#2a2a2a' : '#ffffff'
+  };
+  
+  const settingTextStyle = {
+    color: isDarkMode ? '#e0e0e0' : '#333333'
+  };
+  
+  const savedIpContainerStyle = {
+    backgroundColor: isDarkMode ? '#2a2a2a' : '#e8f5fe'
+  };
+  
+  const savedIpTextStyle = {
+    color: isDarkMode ? '#e0e0e0' : '#333333'
+  };
+
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" />
-      <View style={styles.header}>
-        <Text style={styles.headerText}>Blinky</Text>
-      </View>
-      
-      <View style={styles.content}>
-        {/* Internet Toggle */}
-        <View style={styles.settingContainer}>
-          <View style={styles.settingLabel}>
-            <Text style={styles.settingText}>Internet</Text>
-          </View>
-          <Switch
-            trackColor={{ false: '#767577', true: '#81b0ff' }}
-            thumbColor={internetEnabled ? '#f5dd4b' : '#f4f3f4'}
-            ios_backgroundColor="#3e3e3e"
-            onValueChange={toggleInternet}
-            value={internetEnabled}
-            style={styles.switch}
-            disabled={isLoading}
-          />
+    <View style={[styles.container, containerStyle]}>
+      <StatusBar barStyle={isDarkMode ? "dark-content" : "dark-content"} />
+      <SafeAreaView style={{ flex: 1 }}>
+        <View style={[styles.header, headerStyle]}>
+          <Text style={[styles.headerText, headerTextStyle]}>Blinky</Text>
         </View>
         
-        {/* WiFi Toggle with Expandable Input */}
-        <View style={styles.settingContainer}>
-          <View style={styles.settingLabel}>
-            <Text style={styles.settingText}>WiFi</Text>
-            <TouchableOpacity onPress={toggleIpInput} style={styles.arrowButton}>
-              <AntDesign 
-                name={showIpInput ? "up" : "down"} 
-                size={20} 
-                color="#555" 
-              />
-            </TouchableOpacity>
-          </View>
-          <Switch
-            trackColor={{ false: '#767577', true: '#81b0ff' }}
-            thumbColor={wifiEnabled ? '#f5dd4b' : '#f4f3f4'}
-            ios_backgroundColor="#3e3e3e"
-            onValueChange={toggleWifi}
-            value={wifiEnabled}
-            style={styles.switch}
-            disabled={isLoading || !savedIpAddress}
-          />
-        </View>
-        
-        {/* IP Address Input (Expandable) */}
-        {showIpInput && (
-          <View style={styles.ipInputContainer}>
-            <TextInput
-              style={styles.ipInput}
-              placeholder="Enter IP Address"
-              value={ipAddress}
-              onChangeText={setIpAddress}
-              keyboardType="numeric"
-              autoFocus
+        <View style={styles.content}>
+          {/* Internet Toggle */}
+          <View style={[styles.settingContainer, settingContainerStyle]}>
+            <View style={styles.settingLabel}>
+              <Text style={[styles.settingText, settingTextStyle]}>Internet</Text>
+            </View>
+            <Switch
+              trackColor={{ false: '#767577', true: '#81b0ff' }}
+              thumbColor={internetEnabled ? '#f5dd4b' : '#f4f3f4'}
+              ios_backgroundColor="#3e3e3e"
+              onValueChange={toggleInternet}
+              value={internetEnabled}
+              style={styles.switch}
+              disabled={isLoading}
             />
-            <TouchableOpacity 
-              style={styles.saveButton}
-              onPress={saveIpAddress}
-            >
-              <Feather name="check" size={20} color="#fff" />
-            </TouchableOpacity>
           </View>
-        )}
-        
-        {/* Display saved IP if available */}
-        {savedIpAddress ? (
-          <View style={styles.savedIpContainer}>
-            <Text style={styles.savedIpText}>Saved IP: {savedIpAddress}</Text>
+          
+          {/* Internet Lights (shown when Internet is enabled) */}
+          {internetEnabled && (
+            <View style={[styles.lightsContainer, settingContainerStyle]}>
+              <LightButton 
+                lightOn={internetLights.one}
+                lightNumber="1"
+                onPress={() => toggleInternetLight('one')}
+                disabled={isLoading}
+                isDarkMode={isDarkMode}
+              />
+              
+              <LightButton 
+                lightOn={internetLights.two}
+                lightNumber="2"
+                onPress={() => toggleInternetLight('two')}
+                disabled={isLoading}
+                isDarkMode={isDarkMode}
+              />
+              
+              <LightButton 
+                lightOn={internetLights.three}
+                lightNumber="3"
+                onPress={() => toggleInternetLight('three')}
+                disabled={isLoading}
+                isDarkMode={isDarkMode}
+              />
+            </View>
+          )}
+          
+          {/* WiFi Toggle with Expandable Input */}
+          <View style={[styles.settingContainer, settingContainerStyle]}>
+            <View style={styles.settingLabel}>
+              <Text style={[styles.settingText, settingTextStyle]}>WiFi</Text>
+              <TouchableOpacity onPress={toggleIpInput} style={styles.arrowButton}>
+                <AntDesign 
+                  name={showIpInput ? "up" : "down"} 
+                  size={20} 
+                  color={isDarkMode ? "#aaa" : "#555"} 
+                />
+              </TouchableOpacity>
+            </View>
+            <Switch
+              trackColor={{ false: '#767577', true: '#81b0ff' }}
+              thumbColor={wifiEnabled ? '#f5dd4b' : '#f4f3f4'}
+              ios_backgroundColor="#3e3e3e"
+              onValueChange={toggleWifi}
+              value={wifiEnabled}
+              style={styles.switch}
+              disabled={isLoading || !savedIpAddress}
+            />
           </View>
-        ) : null}
-      </View>
-    </SafeAreaView>
+          
+          {/* WiFi Lights (shown when WiFi is enabled) */}
+          {wifiEnabled && (
+            <View style={[styles.lightsContainer, settingContainerStyle]}>
+              <LightButton 
+                lightOn={wifiLights.one}
+                lightNumber="1"
+                onPress={() => toggleWifiLight('one')}
+                disabled={isLoading}
+                isDarkMode={isDarkMode}
+              />
+              
+              <LightButton 
+                lightOn={wifiLights.two}
+                lightNumber="2"
+                onPress={() => toggleWifiLight('two')}
+                disabled={isLoading}
+                isDarkMode={isDarkMode}
+              />
+              
+              <LightButton 
+                lightOn={wifiLights.three}
+                lightNumber="3"
+                onPress={() => toggleWifiLight('three')}
+                disabled={isLoading}
+                isDarkMode={isDarkMode}
+              />
+            </View>
+          )}
+          
+          {/* IP Address Input (Expandable) */}
+          {showIpInput && (
+            <IpInputSection 
+              ipAddress={ipAddress}
+              setIpAddress={setIpAddress}
+              saveIpAddress={saveIpAddress}
+              isDarkMode={isDarkMode}
+            />
+          )}
+          
+          {/* Display saved IP if available */}
+          {savedIpAddress ? (
+            <View style={[styles.savedIpContainer, savedIpContainerStyle]}>
+              <Text style={[styles.savedIpText, savedIpTextStyle]}>
+                Saved IP: {savedIpAddress}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f7',
+    backgroundColor: '#121212',
   },
   header: {
-    backgroundColor: '#3498db',
+    backgroundColor: '#1a1a1a',
     paddingVertical: 16,
     paddingHorizontal: 20,
     alignItems: 'center',
@@ -200,7 +481,7 @@ const styles = StyleSheet.create({
   headerText: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#fff',
+    color: '#e0e0e0',
   },
   content: {
     flex: 1,
@@ -211,7 +492,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: '#2a2a2a',
     padding: 16,
     borderRadius: 10,
     marginBottom: 16,
@@ -228,7 +509,7 @@ const styles = StyleSheet.create({
   settingText: {
     fontSize: 18,
     fontWeight: '500',
-    color: '#333',
+    color: '#e0e0e0',
   },
   arrowButton: {
     marginLeft: 10,
@@ -244,13 +525,14 @@ const styles = StyleSheet.create({
   },
   ipInput: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#333333',
     borderRadius: 8,
     padding: 12,
     fontSize: 16,
     marginRight: 10,
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: '#444444',
+    color: '#e0e0e0'
   },
   saveButton: {
     backgroundColor: '#3498db',
@@ -261,13 +543,44 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   savedIpContainer: {
-    backgroundColor: '#e8f5fe',
+    backgroundColor: '#2a2a2a',
     padding: 12,
     borderRadius: 8,
     marginHorizontal: 16,
   },
   savedIpText: {
     fontSize: 16,
-    color: '#333',
+    color: '#e0e0e0',
+  },
+  lightsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: '#2a2a2a',
+    padding: 16,
+    borderRadius: 10,
+    marginBottom: 16,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  lightButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#444',
+    width: '30%',
+  },
+  lightButtonOn: {
+    backgroundColor: 'rgba(245, 221, 75, 0.2)',
+    borderColor: '#f5dd4b',
+  },
+  lightText: {
+    marginTop: 8,
+    fontSize: 16,
+    color: '#e0e0e0',
   },
 });
