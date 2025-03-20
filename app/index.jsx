@@ -61,16 +61,23 @@ const IpInputSection = ({ ipAddress, setIpAddress, saveIpAddress, isDarkMode }) 
 const LightButton = ({ lightOn, lightNumber, onPress, disabled, isDarkMode }) => {
   return (
     <TouchableOpacity 
-      style={[styles.lightButton, lightOn === 1 && styles.lightButtonOn]}
+      style={[
+        styles.lightButton, 
+        lightOn === 1 && styles.lightButtonOn,
+        disabled && styles.disabledButton
+      ]}
       onPress={onPress}
       disabled={disabled}
     >
       <FontAwesome 
         name="lightbulb-o" 
         size={24} 
-        color={lightOn === 1 ? '#f5dd4b' : '#888'} 
+        color={lightOn === 1 ? '#f5dd4b' : disabled ? '#555' : '#888'} 
       />
-      <Text style={[styles.lightText, { color: isDarkMode ? '#e0e0e0' : '#333333' }]}>
+      <Text style={[
+        styles.lightText, 
+        { color: isDarkMode ? (disabled ? '#666' : '#e0e0e0') : (disabled ? '#aaa' : '#333333') }
+      ]}>
         {lightNumber}
       </Text>
     </TouchableOpacity>
@@ -252,14 +259,40 @@ export default function BlinkyApp() {
       const currentState = internetLights[light];
       const newState = currentState === 1 ? 0 : 1;
       
-      // Update Firebase
-      await set(ref(database, `internet/${light}`), newState);
+      // New logic: When turning on a light, check if it's blinky or regular lights
+      const updatedLights = { ...internetLights };
+      
+      if (light === 'blinky' && newState === 1) {
+        // If turning on blinky, turn off others
+        updatedLights.one = 0;
+        updatedLights.two = 0;
+        updatedLights.three = 0;
+        updatedLights.blinky = 1;
+        
+        // Update all in Firebase
+        await set(ref(database, 'internet'), {
+          enabled: 1,
+          one: 0,
+          two: 0,
+          three: 0,
+          blinky: 1
+        });
+      } else if (light !== 'blinky' && newState === 1 && internetLights.blinky === 1) {
+        // If turning on a regular light while blinky is on, turn off blinky first
+        updatedLights.blinky = 0;
+        updatedLights[light] = 1;
+        
+        // Update individual values
+        await set(ref(database, 'internet/blinky'), 0);
+        await set(ref(database, `internet/${light}`), 1);
+      } else {
+        // Normal toggle for the specific light
+        updatedLights[light] = newState;
+        await set(ref(database, `internet/${light}`), newState);
+      }
       
       // Update local state
-      setInternetLights(prev => ({
-        ...prev,
-        [light]: newState
-      }));
+      setInternetLights(updatedLights);
     } catch (error) {
       console.error("Error updating Firebase:", error);
       Alert.alert("Error", "Failed to update light state");
@@ -276,23 +309,57 @@ export default function BlinkyApp() {
       const currentState = wifiLights[light];
       const newState = currentState === 1 ? 0 : 1;
       
-      // Update Firebase
-      await set(ref(database, `wifi/${light}`), newState);
+      // New logic: When turning on a light, check if it's blinky or regular lights
+      const updatedLights = { ...wifiLights };
       
-      // Send HTTP request
-      const response = await fetch(`http://${savedIpAddress}:3000/${light}/${newState}`, {
-        method: 'GET',
-      });
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      if (light === 'blinky' && newState === 1) {
+        // If turning on blinky, turn off others
+        updatedLights.one = 0;
+        updatedLights.two = 0;
+        updatedLights.three = 0;
+        updatedLights.blinky = 1;
+        
+        // Update all in Firebase
+        await set(ref(database, 'wifi'), {
+          enabled: 1,
+          one: 0,
+          two: 0,
+          three: 0,
+          blinky: 1
+        });
+        
+        // Send HTTP requests to update all lights
+        await Promise.all([
+          fetch(`http://${savedIpAddress}:3000/one/0`),
+          fetch(`http://${savedIpAddress}:3000/two/0`),
+          fetch(`http://${savedIpAddress}:3000/three/0`),
+          fetch(`http://${savedIpAddress}:3000/blinky/1`)
+        ]);
+      } else if (light !== 'blinky' && newState === 1 && wifiLights.blinky === 1) {
+        // If turning on a regular light while blinky is on, turn off blinky first
+        updatedLights.blinky = 0;
+        updatedLights[light] = 1;
+        
+        // Update in Firebase
+        await set(ref(database, 'wifi/blinky'), 0);
+        await set(ref(database, `wifi/${light}`), 1);
+        
+        // Send HTTP requests
+        await fetch(`http://${savedIpAddress}:3000/blinky/0`);
+        await fetch(`http://${savedIpAddress}:3000/${light}/1`);
+      } else {
+        // Normal toggle for the specific light
+        updatedLights[light] = newState;
+        
+        // Update in Firebase
+        await set(ref(database, `wifi/${light}`), newState);
+        
+        // Send HTTP request
+        await fetch(`http://${savedIpAddress}:3000/${light}/${newState}`);
       }
       
       // Update local state
-      setWifiLights(prev => ({
-        ...prev,
-        [light]: newState
-      }));
+      setWifiLights(updatedLights);
     } catch (error) {
       console.error("Error sending HTTP request:", error);
       Alert.alert("Error", "Failed to send request to the IP address");
@@ -373,7 +440,7 @@ export default function BlinkyApp() {
                 lightOn={internetLights.one}
                 lightNumber="1"
                 onPress={() => toggleInternetLight('one')}
-                disabled={isLoading}
+                disabled={isLoading || internetLights.blinky === 1}
                 isDarkMode={isDarkMode}
               />
               
@@ -381,7 +448,7 @@ export default function BlinkyApp() {
                 lightOn={internetLights.two}
                 lightNumber="2"
                 onPress={() => toggleInternetLight('two')}
-                disabled={isLoading}
+                disabled={isLoading || internetLights.blinky === 1}
                 isDarkMode={isDarkMode}
               />
               
@@ -389,7 +456,7 @@ export default function BlinkyApp() {
                 lightOn={internetLights.three}
                 lightNumber="3"
                 onPress={() => toggleInternetLight('three')}
-                disabled={isLoading}
+                disabled={isLoading || internetLights.blinky === 1}
                 isDarkMode={isDarkMode}
               />
               
@@ -397,7 +464,7 @@ export default function BlinkyApp() {
                 lightOn={internetLights.blinky}
                 lightNumber="Blink"
                 onPress={() => toggleInternetLight('blinky')}
-                disabled={isLoading}
+                disabled={isLoading || internetLights.one === 1 || internetLights.two === 1 || internetLights.three === 1}
                 isDarkMode={isDarkMode}
               />
             </View>
@@ -433,7 +500,7 @@ export default function BlinkyApp() {
                 lightOn={wifiLights.one}
                 lightNumber="1"
                 onPress={() => toggleWifiLight('one')}
-                disabled={isLoading}
+                disabled={isLoading || wifiLights.blinky === 1}
                 isDarkMode={isDarkMode}
               />
               
@@ -441,7 +508,7 @@ export default function BlinkyApp() {
                 lightOn={wifiLights.two}
                 lightNumber="2"
                 onPress={() => toggleWifiLight('two')}
-                disabled={isLoading}
+                disabled={isLoading || wifiLights.blinky === 1}
                 isDarkMode={isDarkMode}
               />
               
@@ -449,7 +516,7 @@ export default function BlinkyApp() {
                 lightOn={wifiLights.three}
                 lightNumber="3"
                 onPress={() => toggleWifiLight('three')}
-                disabled={isLoading}
+                disabled={isLoading || wifiLights.blinky === 1}
                 isDarkMode={isDarkMode}
               />
               
@@ -457,7 +524,7 @@ export default function BlinkyApp() {
                 lightOn={wifiLights.blinky}
                 lightNumber="Blink"
                 onPress={() => toggleWifiLight('blinky')}
-                disabled={isLoading}
+                disabled={isLoading || wifiLights.one === 1 || wifiLights.two === 1 || wifiLights.three === 1}
                 isDarkMode={isDarkMode}
               />
             </View>
@@ -602,6 +669,10 @@ const styles = StyleSheet.create({
   lightButtonOn: {
     backgroundColor: 'rgba(245, 221, 75, 0.2)',
     borderColor: '#f5dd4b',
+  },
+  disabledButton: {
+    opacity: 0.5,
+    borderColor: '#555',
   },
   lightText: {
     marginTop: 8,

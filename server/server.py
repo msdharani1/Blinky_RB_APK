@@ -2,183 +2,191 @@ from flask import Flask, jsonify, request
 import json
 import os
 import threading
-import time
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# File to store the light states
-LIGHT_STATE_FILE = 'light_state.json'
+# Path to our local JSON data file
+DATA_FILE = 'lights_data.json'
 
-# Global variables for blinky control
-blinky_active = False
-blinky_thread = None
-blinky_interval = 0.5  # half-second blink interval
+# Lock for thread-safe file access
+file_lock = threading.Lock()
 
-# Initialize the JSON file if it doesn't exist
-def initialize_light_state():
-    if not os.path.exists(LIGHT_STATE_FILE):
-        with open(LIGHT_STATE_FILE, 'w') as file:
-            json.dump({
-                "one": 0,
-                "two": 0,
-                "three": 0,
-                "blinky": 0
-            }, file)
+# Default data structure
+DEFAULT_DATA = {
+    "wifi": {
+        "enabled": 0,
+        "one": 0,
+        "two": 0,
+        "three": 0,
+        "blinky": 0
+    }
+}
 
-# Helper function to update a specific light state
-def update_light_state(light_id, state):
-    current_state = read_light_state()
-    current_state[light_id] = state
+def init_data_file():
+    """Initialize the data file if it doesn't exist"""
+    if not os.path.exists(DATA_FILE):
+        with open(DATA_FILE, 'w') as f:
+            json.dump(DEFAULT_DATA, f, indent=2)
+        logger.info(f"Created new data file: {DATA_FILE}")
+    else:
+        logger.info(f"Using existing data file: {DATA_FILE}")
+
+def read_data():
+    """Read data from the JSON file"""
+    with file_lock:
+        try:
+            with open(DATA_FILE, 'r') as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            logger.error(f"Error reading {DATA_FILE}, resetting to default")
+            data = DEFAULT_DATA
+            with open(DATA_FILE, 'w') as f:
+                json.dump(data, f, indent=2)
+            return data
+
+def write_data(data):
+    """Write data to the JSON file"""
+    with file_lock:
+        with open(DATA_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+        logger.debug(f"Updated data file: {data}")
+
+# Routes for WiFi controls
+
+@app.route('/wifi/enabled/<int:state>', methods=['GET', 'POST'])
+def set_wifi_enabled(state):
+    """Toggle WiFi on/off"""
+    logger.info(f"Request to set WiFi enabled to: {state}")
     
-    with open(LIGHT_STATE_FILE, 'w') as file:
-        json.dump(current_state, file)
+    # Ensure state is either 0 or 1
+    state = 1 if state == 1 else 0
     
-    return current_state
-
-# Helper function to read all light states
-def read_light_state():
-    try:
-        with open(LIGHT_STATE_FILE, 'r') as file:
-            return json.load(file)
-    except FileNotFoundError:
-        initialize_light_state()
-        return {"one": 0, "two": 0, "three": 0, "blinky": 0}
-
-# Blinky function that will run in a separate thread
-def blinky_function():
-    global blinky_active
-    blinky_status = 1  # Start with ON state
+    data = read_data()
     
-    while blinky_active:
-        # Toggle between 0 and 1
-        blinky_status = 1 - blinky_status
-        
-        # Read the current state
-        current_state = read_light_state()
-        
-        # Only update if blinky is still enabled
-        if current_state["blinky"] == 1:
-            # Update all three lights to the same state
-            update_light_state("one", blinky_status)
-            update_light_state("two", blinky_status)
-            update_light_state("three", blinky_status)
-            
-            # Sleep for the blink interval
-            time.sleep(blinky_interval)
+    # If turning off WiFi, turn off all lights
+    if state == 0:
+        data["wifi"] = {
+            "enabled": 0,
+            "one": 0,
+            "two": 0,
+            "three": 0,
+            "blinky": 0
+        }
+    else:
+        # Just update the enabled state
+        data["wifi"]["enabled"] = state
+    
+    write_data(data)
+    logger.info(f"WiFi enabled set to: {state}")
+    return jsonify({"success": True, "data": data["wifi"]})
+
+@app.route('/wifi/<light>/<int:state>', methods=['GET', 'POST'])
+def set_wifi_light(light, state):
+    """Set WiFi light state"""
+    logger.info(f"Request to set WiFi light {light} to: {state}")
+    
+    if light not in ['one', 'two', 'three', 'blinky']:
+        logger.warning(f"Invalid light name: {light}")
+        return jsonify({"success": False, "error": "Invalid light name"}), 400
+    
+    # Ensure state is either 0 or 1
+    state = 1 if state == 1 else 0
+    
+    data = read_data()
+    
+    # Only proceed if WiFi is enabled
+    if data["wifi"]["enabled"] != 1:
+        logger.warning("Cannot set light state: WiFi is disabled")
+        return jsonify({"success": False, "error": "WiFi is disabled"}), 400
+    
+    # Handle the blinky vs regular lights logic
+    if light == 'blinky' and state == 1:
+        # If turning on blinky, turn off other lights
+        logger.info("Turning on blinky, turning off other lights")
+        data["wifi"]["one"] = 0
+        data["wifi"]["two"] = 0
+        data["wifi"]["three"] = 0
+        data["wifi"]["blinky"] = 1
+    elif light != 'blinky' and state == 1 and data["wifi"]["blinky"] == 1:
+        # If turning on a regular light while blinky is on, turn off blinky first
+        logger.info(f"Turning on light {light}, turning off blinky")
+        data["wifi"]["blinky"] = 0
+        data["wifi"][light] = 1
+    else:
+        # Normal toggle for the specific light
+        logger.info(f"Setting light {light} to {state}")
+        data["wifi"][light] = state
+    
+    write_data(data)
+    return jsonify({"success": True, "data": data["wifi"]})
+
+# Direct control endpoints for hardware (ESP8266, Arduino, etc.)
+@app.route('/<light>/<int:state>', methods=['GET'])
+def control_light(light, state):
+    """Direct control endpoint for physical light control"""
+    logger.info(f"Direct hardware request: light {light} to state {state}")
+    
+    if light not in ['one', 'two', 'three', 'blinky']:
+        return jsonify({"success": False, "error": "Invalid light name"}), 400
+    
+    # This endpoint would send commands to actual hardware
+    # For this example, we'll just update our state file
+    
+    data = read_data()
+    
+    # Only update if WiFi is enabled (for consistency with the app logic)
+    if data["wifi"]["enabled"] == 1:
+        if light == 'blinky' and state == 1:
+            # If turning on blinky, turn off others
+            data["wifi"]["one"] = 0
+            data["wifi"]["two"] = 0
+            data["wifi"]["three"] = 0
+            data["wifi"]["blinky"] = 1
+        elif light != 'blinky' and state == 1 and data["wifi"]["blinky"] == 1:
+            # If turning on a regular light while blinky is on, turn off blinky
+            data["wifi"]["blinky"] = 0
+            data["wifi"][light] = 1
         else:
-            # Exit if blinky was disabled
-            break
+            # Normal toggle
+            data["wifi"][light] = state
+        
+        write_data(data)
+    
+    return jsonify({
+        "success": True, 
+        "light": light, 
+        "state": state,
+        "currentState": data["wifi"]
+    })
 
-# Route for the root endpoint
-@app.route('/')
+# Data retrieval route
+@app.route('/wifi', methods=['GET'])
+def get_wifi_data():
+    """Get WiFi data"""
+    data = read_data()
+    return jsonify(data["wifi"])
+
+# Testing route - useful for checking the server is working
+@app.route('/', methods=['GET'])
 def index():
-    current_state = read_light_state()
+    """Server status and data"""
     return jsonify({
         "status": "running",
-        "current_state": current_state
-    })
-
-# Routes for individual lights with dynamic state
-@app.route('/<light_id>/<int:state>')
-def control_light(light_id, state):
-    global blinky_active, blinky_thread
-    
-    # Validate light_id
-    if light_id not in ["one", "two", "three", "blinky"]:
-        return jsonify({
-            "status": "error",
-            "message": "Invalid light ID. Use 'one', 'two', 'three', or 'blinky'."
-        }), 400
-    
-    # Validate state
-    if state not in [0, 1]:
-        return jsonify({
-            "status": "error",
-            "message": "Invalid state value. Use 0 or 1."
-        }), 400
-    
-    # Handle blinky functionality
-    if light_id == "blinky":
-        if state == 1:
-            # Start blinking
-            blinky_active = True
-            update_light_state("blinky", 1)
-            
-            # Start a new thread for blinking if not already running
-            if blinky_thread is None or not blinky_thread.is_alive():
-                blinky_thread = threading.Thread(target=blinky_function)
-                blinky_thread.daemon = True  # Thread will exit when the main program exits
-                blinky_thread.start()
-        else:
-            # Stop blinking
-            blinky_active = False
-            update_light_state("blinky", 0)
-            
-            # Wait for thread to finish if it's running
-            if blinky_thread and blinky_thread.is_alive():
-                blinky_thread.join(timeout=1.0)
-                blinky_thread = None
-    else:
-        # If turning on a regular light while blinky is active, stop blinky
-        if state == 1 and read_light_state()["blinky"] == 1:
-            blinky_active = False
-            update_light_state("blinky", 0)
-            if blinky_thread and blinky_thread.is_alive():
-                blinky_thread.join(timeout=1.0)
-                blinky_thread = None
-        
-        # Update the light state
-        update_light_state(light_id, state)
-    
-    return jsonify({
-        "status": "success",
-        "message": f"{light_id.capitalize()} turned {'ON' if state == 1 else 'OFF'}",
-        "state": state
-    })
-
-# Get the current state of all lights
-@app.route('/state')
-def get_state():
-    state = read_light_state()
-    return jsonify(state)
-
-# Get the state of a specific light
-@app.route('/<light_id>/state')
-def get_light_state(light_id):
-    if light_id not in ["one", "two", "three", "blinky"]:
-        return jsonify({
-            "status": "error",
-            "message": "Invalid light ID. Use 'one', 'two', 'three', or 'blinky'."
-        }), 400
-    
-    state = read_light_state()
-    return jsonify({
-        "status": "success",
-        "light": light_id,
-        "state": state[light_id]
-    })
-
-# Debug route to set the blink interval
-@app.route('/blinky/interval/<float:seconds>')
-def set_blinky_interval(seconds):
-    global blinky_interval
-    
-    # Validate interval
-    if seconds < 0.1 or seconds > 5.0:
-        return jsonify({
-            "status": "error",
-            "message": "Interval must be between 0.1 and 5.0 seconds."
-        }), 400
-    
-    blinky_interval = seconds
-    return jsonify({
-        "status": "success",
-        "message": f"Blinky interval set to {seconds} seconds"
+        "data": read_data()
     })
 
 if __name__ == '__main__':
-    # Initialize the light state file
-    initialize_light_state()
+    # Initialize the data file
+    init_data_file()
     
-    # Run the Flask app on port 3000
+    # Run the Flask app - allowing connections from any device on the network
+    logger.info("Starting WiFi Light Control Server on port 3000")
     app.run(host='0.0.0.0', port=3000, debug=True)
