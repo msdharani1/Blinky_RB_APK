@@ -90,13 +90,15 @@ export default function BlinkyApp() {
   const [internetLights, setInternetLights] = useState({
     one: 0,
     two: 0,
-    three: 0
+    three: 0,
+    blinky: 0
   });
   
   const [wifiLights, setWifiLights] = useState({
     one: 0,
     two: 0,
-    three: 0
+    three: 0,
+    blinky: 0
   });
 
   // Animation value for brightness effect
@@ -106,23 +108,25 @@ export default function BlinkyApp() {
   useEffect(() => {
     const internetRef = ref(database, 'internet');
     onValue(internetRef, (snapshot) => {
-      const data = snapshot.val() || { enabled: 0, one: 0, two: 0, three: 0 };
+      const data = snapshot.val() || { enabled: 0, one: 0, two: 0, three: 0, blinky: 0 };
       setInternetEnabled(data.enabled === 1);
       setInternetLights({
         one: data.one || 0,
         two: data.two || 0,
-        three: data.three || 0
+        three: data.three || 0,
+        blinky: data.blinky || 0
       });
     });
 
     const wifiRef = ref(database, 'wifi');
     onValue(wifiRef, (snapshot) => {
-      const data = snapshot.val() || { enabled: 0, one: 0, two: 0, three: 0 };
+      const data = snapshot.val() || { enabled: 0, one: 0, two: 0, three: 0, blinky: 0 };
       setWifiEnabled(data.enabled === 1);
       setWifiLights({
         one: data.one || 0,
         two: data.two || 0,
-        three: data.three || 0
+        three: data.three || 0,
+        blinky: data.blinky || 0
       });
     });
   }, []);
@@ -130,8 +134,8 @@ export default function BlinkyApp() {
   // Update brightness animation when lights change
   useEffect(() => {
     const anyLightOn = 
-      internetEnabled && (internetLights.one === 1 || internetLights.two === 1 || internetLights.three === 1) ||
-      wifiEnabled && (wifiLights.one === 1 || wifiLights.two === 1 || wifiLights.three === 1);
+      internetEnabled && (internetLights.one === 1 || internetLights.two === 1 || internetLights.three === 1 || internetLights.blinky === 1) ||
+      wifiEnabled && (wifiLights.one === 1 || wifiLights.two === 1 || wifiLights.three === 1 || wifiLights.blinky === 1);
     
     Animated.timing(brightness, {
       toValue: anyLightOn ? 1 : 0,
@@ -154,10 +158,11 @@ export default function BlinkyApp() {
           enabled: 0,
           one: 0,
           two: 0,
-          three: 0
+          three: 0,
+          blinky: 0
         });
         setWifiEnabled(false);
-        setWifiLights({ one: 0, two: 0, three: 0 });
+        setWifiLights({ one: 0, two: 0, three: 0, blinky: 0 });
       }
       
       // Update internet state
@@ -169,9 +174,10 @@ export default function BlinkyApp() {
           enabled: 0,
           one: 0,
           two: 0,
-          three: 0
+          three: 0,
+          blinky: 0
         });
-        setInternetLights({ one: 0, two: 0, three: 0 });
+        setInternetLights({ one: 0, two: 0, three: 0, blinky: 0 });
       }
       
       setInternetEnabled(newState);
@@ -199,10 +205,11 @@ export default function BlinkyApp() {
           enabled: 0,
           one: 0,
           two: 0,
-          three: 0
+          three: 0,
+          blinky: 0
         });
         setInternetEnabled(false);
-        setInternetLights({ one: 0, two: 0, three: 0 });
+        setInternetLights({ one: 0, two: 0, three: 0, blinky: 0 });
       }
       
       // Update WiFi state in Firebase
@@ -214,15 +221,17 @@ export default function BlinkyApp() {
           enabled: 0,
           one: 0,
           two: 0,
-          three: 0
+          three: 0,
+          blinky: 0
         });
-        setWifiLights({ one: 0, two: 0, three: 0 });
+        setWifiLights({ one: 0, two: 0, three: 0, blinky: 0 });
         
         // Also send requests to turn off all lights
         await Promise.all([
           fetch(`http://${savedIpAddress}:3000/one/0`),
           fetch(`http://${savedIpAddress}:3000/two/0`),
-          fetch(`http://${savedIpAddress}:3000/three/0`)
+          fetch(`http://${savedIpAddress}:3000/three/0`),
+          fetch(`http://${savedIpAddress}:3000/blinky/0`)
         ]);
       }
       
@@ -383,6 +392,14 @@ export default function BlinkyApp() {
                 disabled={isLoading}
                 isDarkMode={isDarkMode}
               />
+              
+              <LightButton 
+                lightOn={internetLights.blinky}
+                lightNumber="Blink"
+                onPress={() => toggleInternetLight('blinky')}
+                disabled={isLoading}
+                isDarkMode={isDarkMode}
+              />
             </View>
           )}
           
@@ -432,6 +449,14 @@ export default function BlinkyApp() {
                 lightOn={wifiLights.three}
                 lightNumber="3"
                 onPress={() => toggleWifiLight('three')}
+                disabled={isLoading}
+                isDarkMode={isDarkMode}
+              />
+              
+              <LightButton 
+                lightOn={wifiLights.blinky}
+                lightNumber="Blink"
+                onPress={() => toggleWifiLight('blinky')}
                 disabled={isLoading}
                 isDarkMode={isDarkMode}
               />
@@ -572,7 +597,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#444',
-    width: '30%',
+    width: '22%',
   },
   lightButtonOn: {
     backgroundColor: 'rgba(245, 221, 75, 0.2)',
