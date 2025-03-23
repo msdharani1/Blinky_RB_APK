@@ -15,6 +15,7 @@ import { AntDesign, Feather, FontAwesome } from '@expo/vector-icons';
 import { getDatabase, ref, set, onValue } from 'firebase/database';
 import { initializeApp } from 'firebase/app';
 
+// Firebase configuration
 const firebaseConfig = {
     apiKey: "AIzaSyDAlmuJ6W_B3jM5AeRGEWlgL_E7j_tLxSA",
     authDomain: "networktochattingapp.firebaseapp.com",
@@ -30,7 +31,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const database = getDatabase(app);
 
-// IP Input component to isolate the issue
+// IP Input Component
 const IpInputSection = ({ ipAddress, setIpAddress, saveIpAddress, isDarkMode }) => {
   return (
     <View style={styles.ipInputContainer}>
@@ -40,7 +41,7 @@ const IpInputSection = ({ ipAddress, setIpAddress, saveIpAddress, isDarkMode }) 
           color: isDarkMode ? '#e0e0e0' : '#333333',
           borderColor: isDarkMode ? '#444444' : '#dddddd'
         }]}
-        placeholder="Enter IP Address"
+        placeholder="Enter IP Address (e.g., 192.168.1.100)"
         placeholderTextColor={isDarkMode ? "#aaa" : "#999"}
         value={ipAddress}
         onChangeText={setIpAddress}
@@ -57,7 +58,7 @@ const IpInputSection = ({ ipAddress, setIpAddress, saveIpAddress, isDarkMode }) 
   );
 };
 
-// Light button component
+// Light Button Component
 const LightButton = ({ lightOn, lightNumber, onPress, disabled, isDarkMode }) => {
   return (
     <TouchableOpacity 
@@ -84,6 +85,7 @@ const LightButton = ({ lightOn, lightNumber, onPress, disabled, isDarkMode }) =>
   );
 };
 
+// Main App Component
 export default function BlinkyApp() {
   const [internetEnabled, setInternetEnabled] = useState(false);
   const [wifiEnabled, setWifiEnabled] = useState(false);
@@ -92,8 +94,9 @@ export default function BlinkyApp() {
   const [savedIpAddress, setSavedIpAddress] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
+  const [internetStatus, setInternetStatus] = useState('Internet connection unavailable');
+  const [wifiStatus, setWifiStatus] = useState('Network connection unavailable');
   
-  // Light states
   const [internetLights, setInternetLights] = useState({
     one: 0,
     two: 0,
@@ -108,10 +111,30 @@ export default function BlinkyApp() {
     blinky: 0
   });
 
-  // Animation value for brightness effect
   const brightness = useRef(new Animated.Value(0)).current;
 
-  // Load initial state from Firebase
+  // Network status checker
+  const checkNetworkStatus = async (type, ip = null) => {
+    try {
+      const startTime = Date.now();
+      const response = ip 
+        ? await fetch(`http://${ip}:80/test`, { timeout: 5000 })
+        : await fetch('https://www.google.com', { timeout: 5000 });
+      
+      const responseTime = Date.now() - startTime;
+      
+      if (response.ok) {
+        if (responseTime > 2000) {
+          return 'Network performance degraded';
+        }
+        return type === 'wifi' ? 'IP connection established successfully' : 'Internet connection active';
+      }
+    } catch (error) {
+      return type === 'wifi' ? 'Network connection unavailable' : 'Internet connection unavailable';
+    }
+  };
+
+  // Load initial states and check network
   useEffect(() => {
     const internetRef = ref(database, 'internet');
     onValue(internetRef, (snapshot) => {
@@ -136,9 +159,19 @@ export default function BlinkyApp() {
         blinky: data.blinky || 0
       });
     });
-  }, []);
 
-  // Update brightness animation when lights change
+    // Check network status periodically
+    const interval = setInterval(async () => {
+      const internetStat = await checkNetworkStatus('internet');
+      const wifiStat = savedIpAddress ? await checkNetworkStatus('wifi', savedIpAddress) : 'Network connection unavailable';
+      setInternetStatus(internetStat);
+      setWifiStatus(wifiStat);
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [savedIpAddress]);
+
+  // Update theme based on light states
   useEffect(() => {
     const anyLightOn = 
       internetEnabled && (internetLights.one === 1 || internetLights.two === 1 || internetLights.three === 1 || internetLights.blinky === 1) ||
@@ -150,16 +183,64 @@ export default function BlinkyApp() {
       useNativeDriver: false
     }).start();
 
-    // Update dark mode based on lights
     setIsDarkMode(!anyLightOn);
   }, [internetEnabled, wifiEnabled, internetLights, wifiLights]);
 
+  // IP Validation
+  const validateIpAddress = (ip) => {
+    const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+    return ipRegex.test(ip);
+  };
+
+  // Save and validate IP address
+  const saveIpAddress = async () => {
+    if (!ipAddress) {
+      Alert.alert("Error", "Please enter an IP address");
+      return;
+    }
+
+    if (!validateIpAddress(ipAddress)) {
+      Alert.alert("Error", "Please enter a valid IP address (e.g., 192.168.1.100)");
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const response = await fetch(`http://${ipAddress}:80/test`, {
+        timeout: 5000
+      });
+      
+      if (response.ok) {
+        setSavedIpAddress(ipAddress);
+        setShowIpInput(false);
+        setWifiStatus('IP connection established successfully');
+        Alert.alert("Success", "IP address verified and saved successfully");
+      } else {
+        setWifiStatus('Network connection unavailable');
+        Alert.alert("Error", "Failed to connect to the IP address");
+      }
+    } catch (error) {
+      let errorMessage = "Unable to connect to the IP address";
+      if (error
+
+.code === 'ECONNREFUSED') {
+        errorMessage = "Connection refused. Check if the server is running.";
+      } else if (error.code === 'ETIMEDOUT') {
+        errorMessage = "Connection timed out. Check the IP address and network.";
+      }
+      setWifiStatus('Network connection unavailable');
+      Alert.alert("Error", errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Toggle Internet
   const toggleInternet = async () => {
     try {
       setIsLoading(true);
       const newState = !internetEnabled;
       
-      // If turning on internet, turn off WiFi
       if (newState && wifiEnabled) {
         await set(ref(database, 'wifi'), {
           enabled: 0,
@@ -172,10 +253,8 @@ export default function BlinkyApp() {
         setWifiLights({ one: 0, two: 0, three: 0, blinky: 0 });
       }
       
-      // Update internet state
       await set(ref(database, 'internet/enabled'), newState ? 1 : 0);
       
-      // If turning off internet, turn off all lights
       if (!newState) {
         await set(ref(database, 'internet'), {
           enabled: 0,
@@ -188,17 +267,21 @@ export default function BlinkyApp() {
       }
       
       setInternetEnabled(newState);
+      const status = await checkNetworkStatus('internet');
+      setInternetStatus(status);
     } catch (error) {
       console.error("Error updating Firebase:", error);
-      Alert.alert("Error", "Failed to update light state");
+      setInternetStatus('Internet connection unavailable');
+      Alert.alert("Error", "Failed to update internet state");
     } finally {
       setIsLoading(false);
     }
   };
 
+  // Toggle WiFi
   const toggleWifi = async () => {
     if (!savedIpAddress) {
-      Alert.alert("Error", "Please set an IP address first");
+      Alert.alert("Error", "Please set a valid IP address first");
       return;
     }
 
@@ -206,7 +289,6 @@ export default function BlinkyApp() {
       setIsLoading(true);
       const newState = !wifiEnabled;
       
-      // If turning on WiFi, turn off Internet
       if (newState && internetEnabled) {
         await set(ref(database, 'internet'), {
           enabled: 0,
@@ -219,10 +301,8 @@ export default function BlinkyApp() {
         setInternetLights({ one: 0, two: 0, three: 0, blinky: 0 });
       }
       
-      // Update WiFi state in Firebase
       await set(ref(database, 'wifi/enabled'), newState ? 1 : 0);
       
-      // If turning off WiFi, turn off all lights
       if (!newState) {
         await set(ref(database, 'wifi'), {
           enabled: 0,
@@ -233,24 +313,27 @@ export default function BlinkyApp() {
         });
         setWifiLights({ one: 0, two: 0, three: 0, blinky: 0 });
         
-        // Also send requests to turn off all lights
         await Promise.all([
-          fetch(`http://${savedIpAddress}:3000/one/0`),
-          fetch(`http://${savedIpAddress}:3000/two/0`),
-          fetch(`http://${savedIpAddress}:3000/three/0`),
-          fetch(`http://${savedIpAddress}:3000/blinky/0`)
+          fetch(`http://${savedIpAddress}:80/off/1`),
+          fetch(`http://${savedIpAddress}:80/off/2`),
+          fetch(`http://${savedIpAddress}:80/off/3`),
+          fetch(`http://${savedIpAddress}:80/off/blink`)
         ]);
       }
       
       setWifiEnabled(newState);
+      const status = await checkNetworkStatus('wifi', savedIpAddress);
+      setWifiStatus(status);
     } catch (error) {
-      console.error("Error sending HTTP request:", error);
-      Alert.alert("Error", "Failed to send request to the IP address");
+      console.error("Error toggling WiFi:", error);
+      setWifiStatus('Network connection unavailable');
+      Alert.alert("Error", "Failed to toggle WiFi: " + error.message);
     } finally {
       setIsLoading(false);
     }
   };
 
+  // Toggle Internet Light
   const toggleInternetLight = async (light) => {
     if (!internetEnabled) return;
     
@@ -258,18 +341,14 @@ export default function BlinkyApp() {
       setIsLoading(true);
       const currentState = internetLights[light];
       const newState = currentState === 1 ? 0 : 1;
-      
-      // New logic: When turning on a light, check if it's blinky or regular lights
       const updatedLights = { ...internetLights };
       
       if (light === 'blinky' && newState === 1) {
-        // If turning on blinky, turn off others
         updatedLights.one = 0;
         updatedLights.two = 0;
         updatedLights.three = 0;
         updatedLights.blinky = 1;
         
-        // Update all in Firebase
         await set(ref(database, 'internet'), {
           enabled: 1,
           one: 0,
@@ -278,29 +357,29 @@ export default function BlinkyApp() {
           blinky: 1
         });
       } else if (light !== 'blinky' && newState === 1 && internetLights.blinky === 1) {
-        // If turning on a regular light while blinky is on, turn off blinky first
         updatedLights.blinky = 0;
         updatedLights[light] = 1;
         
-        // Update individual values
         await set(ref(database, 'internet/blinky'), 0);
         await set(ref(database, `internet/${light}`), 1);
       } else {
-        // Normal toggle for the specific light
         updatedLights[light] = newState;
         await set(ref(database, `internet/${light}`), newState);
       }
       
-      // Update local state
       setInternetLights(updatedLights);
+      const status = await checkNetworkStatus('internet');
+      setInternetStatus(status);
     } catch (error) {
-      console.error("Error updating Firebase:", error);
-      Alert.alert("Error", "Failed to update light state");
+      console.error("Error toggling internet light:", error);
+      setInternetStatus('Internet connection unavailable');
+      Alert.alert("Error", "Failed to toggle light");
     } finally {
       setIsLoading(false);
     }
   };
 
+  // Toggle WiFi Light
   const toggleWifiLight = async (light) => {
     if (!wifiEnabled || !savedIpAddress) return;
     
@@ -308,18 +387,22 @@ export default function BlinkyApp() {
       setIsLoading(true);
       const currentState = wifiLights[light];
       const newState = currentState === 1 ? 0 : 1;
-      
-      // New logic: When turning on a light, check if it's blinky or regular lights
       const updatedLights = { ...wifiLights };
       
+      const lightMap = {
+        'one': '1',
+        'two': '2',
+        'three': '3',
+        'blinky': 'blink'
+      };
+      const serverLight = lightMap[light] || light;
+      
       if (light === 'blinky' && newState === 1) {
-        // If turning on blinky, turn off others
         updatedLights.one = 0;
         updatedLights.two = 0;
         updatedLights.three = 0;
         updatedLights.blinky = 1;
         
-        // Update all in Firebase
         await set(ref(database, 'wifi'), {
           enabled: 1,
           one: 0,
@@ -328,58 +411,51 @@ export default function BlinkyApp() {
           blinky: 1
         });
         
-        // Send HTTP requests to update all lights
         await Promise.all([
-          fetch(`http://${savedIpAddress}:3000/one/0`),
-          fetch(`http://${savedIpAddress}:3000/two/0`),
-          fetch(`http://${savedIpAddress}:3000/three/0`),
-          fetch(`http://${savedIpAddress}:3000/blinky/1`)
+          fetch(`http://${savedIpAddress}:80/off/1`),
+          fetch(`http://${savedIpAddress}:80/off/2`),
+          fetch(`http://${savedIpAddress}:80/off/3`),
+          fetch(`http://${savedIpAddress}:80/on/blink`)
         ]);
+
+        setTimeout(async () => {
+          await fetch(`http://${savedIpAddress}:80/off/blink`);
+          updatedLights.blinky = 0;
+          await set(ref(database, 'wifi/blinky'), 0);
+          setWifiLights(updatedLights);
+        }, 6000);
       } else if (light !== 'blinky' && newState === 1 && wifiLights.blinky === 1) {
-        // If turning on a regular light while blinky is on, turn off blinky first
         updatedLights.blinky = 0;
         updatedLights[light] = 1;
         
-        // Update in Firebase
         await set(ref(database, 'wifi/blinky'), 0);
         await set(ref(database, `wifi/${light}`), 1);
         
-        // Send HTTP requests
-        await fetch(`http://${savedIpAddress}:3000/blinky/0`);
-        await fetch(`http://${savedIpAddress}:3000/${light}/1`);
+        await fetch(`http://${savedIpAddress}:80/off/blink`);
+        await fetch(`http://${savedIpAddress}:80/on/${serverLight}`);
       } else {
-        // Normal toggle for the specific light
         updatedLights[light] = newState;
         
-        // Update in Firebase
         await set(ref(database, `wifi/${light}`), newState);
         
-        // Send HTTP request
-        await fetch(`http://${savedIpAddress}:3000/${light}/${newState}`);
+        await fetch(`http://${savedIpAddress}:80/${newState === 1 ? 'on' : 'off'}/${serverLight}`);
       }
       
-      // Update local state
       setWifiLights(updatedLights);
+      const status = await checkNetworkStatus('wifi', savedIpAddress);
+      setWifiStatus(status);
     } catch (error) {
-      console.error("Error sending HTTP request:", error);
-      Alert.alert("Error", "Failed to send request to the IP address");
+      console.error("Error toggling WiFi light:", error);
+      setWifiStatus('Network connection unavailable');
+      Alert.alert("Error", "Failed to toggle light: " + error.message);
     } finally {
       setIsLoading(false);
     }
   };
 
   const toggleIpInput = () => setShowIpInput(previousState => !previousState);
-  
-  const saveIpAddress = () => {
-    if (!ipAddress) {
-      Alert.alert("Error", "Please enter a valid IP address");
-      return;
-    }
-    setSavedIpAddress(ipAddress);
-    setShowIpInput(false);
-  };
 
-  // Background color based on brightness
+  // Dynamic styles
   const containerStyle = {
     backgroundColor: isDarkMode ? '#121212' : '#f5f5f7'
   };
@@ -408,6 +484,15 @@ export default function BlinkyApp() {
     color: isDarkMode ? '#e0e0e0' : '#333333'
   };
 
+  const statusStyle = {
+    color: internetStatus === 'Internet connection active' || internetStatus === 'IP connection established successfully' 
+      ? '#2ecc71' 
+      : internetStatus === 'Network performance degraded' 
+      ? '#f1c40f' 
+      : '#e74c3c'
+  };
+
+  // Render
   return (
     <View style={[styles.container, containerStyle]}>
       <StatusBar barStyle={isDarkMode ? "dark-content" : "dark-content"} />
@@ -417,7 +502,7 @@ export default function BlinkyApp() {
         </View>
         
         <View style={styles.content}>
-          {/* Internet Toggle */}
+          {/* Internet Section */}
           <View style={[styles.settingContainer, settingContainerStyle]}>
             <View style={styles.settingLabel}>
               <Text style={[styles.settingText, settingTextStyle]}>Internet</Text>
@@ -433,7 +518,6 @@ export default function BlinkyApp() {
             />
           </View>
           
-          {/* Internet Lights (shown when Internet is enabled) */}
           {internetEnabled && (
             <View style={[styles.lightsContainer, settingContainerStyle]}>
               <LightButton 
@@ -443,7 +527,6 @@ export default function BlinkyApp() {
                 disabled={isLoading || internetLights.blinky === 1}
                 isDarkMode={isDarkMode}
               />
-              
               <LightButton 
                 lightOn={internetLights.two}
                 lightNumber="2"
@@ -451,7 +534,6 @@ export default function BlinkyApp() {
                 disabled={isLoading || internetLights.blinky === 1}
                 isDarkMode={isDarkMode}
               />
-              
               <LightButton 
                 lightOn={internetLights.three}
                 lightNumber="3"
@@ -459,7 +541,6 @@ export default function BlinkyApp() {
                 disabled={isLoading || internetLights.blinky === 1}
                 isDarkMode={isDarkMode}
               />
-              
               <LightButton 
                 lightOn={internetLights.blinky}
                 lightNumber="Blink"
@@ -470,7 +551,7 @@ export default function BlinkyApp() {
             </View>
           )}
           
-          {/* WiFi Toggle with Expandable Input */}
+          {/* WiFi Section */}
           <View style={[styles.settingContainer, settingContainerStyle]}>
             <View style={styles.settingLabel}>
               <Text style={[styles.settingText, settingTextStyle]}>WiFi</Text>
@@ -493,7 +574,6 @@ export default function BlinkyApp() {
             />
           </View>
           
-          {/* WiFi Lights (shown when WiFi is enabled) */}
           {wifiEnabled && (
             <View style={[styles.lightsContainer, settingContainerStyle]}>
               <LightButton 
@@ -503,7 +583,6 @@ export default function BlinkyApp() {
                 disabled={isLoading || wifiLights.blinky === 1}
                 isDarkMode={isDarkMode}
               />
-              
               <LightButton 
                 lightOn={wifiLights.two}
                 lightNumber="2"
@@ -511,7 +590,6 @@ export default function BlinkyApp() {
                 disabled={isLoading || wifiLights.blinky === 1}
                 isDarkMode={isDarkMode}
               />
-              
               <LightButton 
                 lightOn={wifiLights.three}
                 lightNumber="3"
@@ -519,7 +597,6 @@ export default function BlinkyApp() {
                 disabled={isLoading || wifiLights.blinky === 1}
                 isDarkMode={isDarkMode}
               />
-              
               <LightButton 
                 lightOn={wifiLights.blinky}
                 lightNumber="Blink"
@@ -530,7 +607,7 @@ export default function BlinkyApp() {
             </View>
           )}
           
-          {/* IP Address Input (Expandable) */}
+          {/* IP Input Section */}
           {showIpInput && (
             <IpInputSection 
               ipAddress={ipAddress}
@@ -540,7 +617,6 @@ export default function BlinkyApp() {
             />
           )}
           
-          {/* Display saved IP if available */}
           {savedIpAddress ? (
             <View style={[styles.savedIpContainer, savedIpContainerStyle]}>
               <Text style={[styles.savedIpText, savedIpTextStyle]}>
@@ -549,11 +625,25 @@ export default function BlinkyApp() {
             </View>
           ) : null}
         </View>
+
+        {/* Network Status Footer */}
+        <View style={[styles.statusContainer, { backgroundColor: isDarkMode ? '#1a1a1a' : '#f0f0f0' }]}>
+          <Text style={[styles.statusText, statusStyle]}>
+            Internet: {internetStatus}
+          </Text>
+          <Text style={[styles.statusText, { 
+            color: wifiStatus === 'IP connection established successfully' ? '#2ecc71' : 
+                   wifiStatus === 'Network performance degraded' ? '#f1c40f' : '#e74c3c' 
+          }]}>
+            WiFi: {wifiStatus}
+          </Text>
+        </View>
       </SafeAreaView>
     </View>
   );
 }
 
+// Styles
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -678,5 +768,19 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 16,
     color: '#e0e0e0',
+  },
+  statusContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: 10,
+    backgroundColor: '#1a1a1a',
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+  statusText: {
+    fontSize: 12,
+    marginVertical: 2,
   },
 });
