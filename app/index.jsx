@@ -118,7 +118,7 @@ export default function BlinkyApp() {
     try {
       const startTime = Date.now();
       const response = ip 
-        ? await fetch(`http://${ip}:80/test`, { timeout: 5000 })
+        ? await fetch(`http://${ip}`, { timeout: 5000 })
         : await fetch('https://www.google.com', { timeout: 5000 });
       
       const responseTime = Date.now() - startTime;
@@ -206,7 +206,7 @@ export default function BlinkyApp() {
 
     setIsLoading(true);
     try {
-      const response = await fetch(`http://${ipAddress}:80/test`, {
+      const response = await fetch(`http://${ipAddress}`, {
         timeout: 5000
       });
       
@@ -314,10 +314,10 @@ export default function BlinkyApp() {
         setWifiLights({ one: 0, two: 0, three: 0, blinky: 0 });
         
         await Promise.all([
-          fetch(`http://${savedIpAddress}:80/off/1`),
-          fetch(`http://${savedIpAddress}:80/off/2`),
-          fetch(`http://${savedIpAddress}:80/off/3`),
-          fetch(`http://${savedIpAddress}:80/off/blink`)
+          fetch(`http://${savedIpAddress}/off/1`),
+          fetch(`http://${savedIpAddress}/off/2`),
+          fetch(`http://${savedIpAddress}/off/3`),
+          fetch(`http://${savedIpAddress}/off/blinkyy`)
         ]);
       }
       
@@ -360,7 +360,7 @@ export default function BlinkyApp() {
         updatedLights.blinky = 0;
         updatedLights[light] = 1;
         
-        await set(ref(database, 'internet/blinky'), 0);
+        await set(ref(database, 'internet/blinkyy'), 0);
         await set(ref(database, `internet/${light}`), 1);
       } else {
         updatedLights[light] = newState;
@@ -412,14 +412,14 @@ export default function BlinkyApp() {
         });
         
         await Promise.all([
-          fetch(`http://${savedIpAddress}:80/off/1`),
-          fetch(`http://${savedIpAddress}:80/off/2`),
-          fetch(`http://${savedIpAddress}:80/off/3`),
-          fetch(`http://${savedIpAddress}:80/on/blink`)
+          fetch(`http://${savedIpAddress}/off/1`),
+          fetch(`http://${savedIpAddress}/off/2`),
+          fetch(`http://${savedIpAddress}/off/3`),
+          fetch(`http://${savedIpAddress}/on/blinky`)
         ]);
 
         setTimeout(async () => {
-          await fetch(`http://${savedIpAddress}:80/off/blink`);
+          await fetch(`http://${savedIpAddress}/off/blinky`);
           updatedLights.blinky = 0;
           await set(ref(database, 'wifi/blinky'), 0);
           setWifiLights(updatedLights);
@@ -431,14 +431,14 @@ export default function BlinkyApp() {
         await set(ref(database, 'wifi/blinky'), 0);
         await set(ref(database, `wifi/${light}`), 1);
         
-        await fetch(`http://${savedIpAddress}:80/off/blink`);
-        await fetch(`http://${savedIpAddress}:80/on/${serverLight}`);
+        await fetch(`http://${savedIpAddress}/off/blinky`);
+        await fetch(`http://${savedIpAddress}/on/${serverLight}`);
       } else {
         updatedLights[light] = newState;
         
         await set(ref(database, `wifi/${light}`), newState);
         
-        await fetch(`http://${savedIpAddress}:80/${newState === 1 ? 'on' : 'off'}/${serverLight}`);
+        await fetch(`http://${savedIpAddress}/${newState === 1 ? 'on' : 'off'}/${serverLight}`);
       }
       
       setWifiLights(updatedLights);
